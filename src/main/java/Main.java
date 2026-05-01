@@ -1,23 +1,15 @@
-import dao.PedidoDAO;
 import monitor.AutoManager;
+import view.MainView;
 
 public class Main {
 
     public static void main(String[] args) {
 
-        // hilo monitoreo
-        new Thread(() -> new AutoManager().iniciar()).start();
+        MainView view = new MainView();
 
-        PedidoDAO dao = new PedidoDAO();
-
-        // simulación pedidos
-        while (true) {
-            try {
-                dao.guardarDetalle(1, 1, 2, 500);
-                Thread.sleep(15000);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+        new Thread(() -> {
+            AutoManager manager = new AutoManager(view);
+            manager.iniciar();
+        }).start();
     }
 }

@@ -1,82 +1,127 @@
 package dao;
 
 import config.DBConnection;
-import util.HttpUtil;
-
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.sql.Timestamp;
+import java.sql.Types;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 public class PedidoDAO {
 
-    // guardar detalle local
-    public void guardarDetalle(int numped, int codart, int cantidad, double subtotal) {
+    // 🔴 GUARDAR LOCAL
+    public int guardarLocal(String codcli, double importe) {
 
-        try (Connection conn = DBConnection.getConnection()) {
+        try (Connection conn = DBConnection.getLocal()) {
 
-            String sql = "INSERT INTO Dped (numped, codart, cantidad, subtotal, estado) VALUES (?, ?, ?, ?, 0)";
-            PreparedStatement ps = conn.prepareStatement(sql);
+            String sql = "INSERT INTO Pedido (fecreg, codcli, importe) VALUES (?, ?, ?)";
+            PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
 
-            ps.setInt(1, numped);
-            ps.setInt(2, codart);
-            ps.setInt(3, cantidad);
-            ps.setDouble(4, subtotal);
+            ps.setNull(1, Types.TIMESTAMP);
+            ps.setString(2, codcli);
+            ps.setDouble(3, importe);
 
             ps.executeUpdate();
 
-            System.out.println("Detalle guardado LOCAL");
+            ResultSet rs = ps.getGeneratedKeys();
+            if (rs.next()) return rs.getInt(1);
 
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+        return -1;
     }
 
-    // sincronizar pendientes
-    public void sincronizar() {
+    // 🟢 GUARDAR REMOTO
+    public int guardarRemoto(String codcli, double importe) {
 
-        try (Connection conn = DBConnection.getConnection()) {
+        try (Connection conn = DBConnection.getRemote()) {
 
-            String sql = "SELECT * FROM Dped WHERE estado = 0";
-            PreparedStatement ps = conn.prepareStatement(sql);
+            String sql = "INSERT INTO Pedido (fecreg, codcli, importe) VALUES (?, ?, ?)";
+            PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
 
-            ResultSet rs = ps.executeQuery();
+            ps.setTimestamp(1,
+                    Timestamp.valueOf(LocalDateTime.now(ZoneId.of("America/Lima")))
+            );
+
+            ps.setString(2, codcli);
+            ps.setDouble(3, importe);
+
+            ps.executeUpdate();
+
+            ResultSet rs = ps.getGeneratedKeys();
+            if (rs.next()) return rs.getInt(1);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return -1;
+    }
+
+    // 🔁 SINCRONIZAR PEDIDOS PENDIENTES
+    public void sincronizarPedidos() {
+
+        try (
+                Connection local = DBConnection.getLocal();
+                Connection remote = DBConnection.getRemote()
+        ) {
+
+            String selectSQL = "SELECT * FROM Pedido WHERE fecreg IS NULL";
+            ResultSet rs = local.createStatement().executeQuery(selectSQL);
 
             while (rs.next()) {
 
-                int id = rs.getInt("iddetalle");
-                int numped = rs.getInt("numped");
+                int numpedLocal = rs.getInt("numped");
+                String codcli = rs.getString("codcli");
+                double importe = rs.getDouble("importe");
 
-                boolean enviado = enviarPedido(numped);
+                // 🔥 fecha actual (Lima)
+                Timestamp ahora = Timestamp.valueOf(
+                        LocalDateTime.now(ZoneId.of("America/Lima"))
+                );
 
-                if (enviado) {
-                    marcarEnviado(id);
-                }
+                // 1️⃣ INSERTAR EN VPS
+                PreparedStatement ps = remote.prepareStatement(
+                        "INSERT INTO Pedido (fecreg, codcli, importe) VALUES (?, ?, ?)",
+                        Statement.RETURN_GENERATED_KEYS
+                );
+
+                ps.setTimestamp(1, ahora);
+                ps.setString(2, codcli);
+                ps.setDouble(3, importe);
+
+                ps.executeUpdate();
+
+                ResultSet gen = ps.getGeneratedKeys();
+                int nuevoId = -1;
+                if (gen.next()) nuevoId = gen.getInt(1);
+
+                // 2️⃣ ACTUALIZAR DETALLE CON NUEVO ID
+                PreparedStatement updDetalle = local.prepareStatement(
+                        "UPDATE Dped SET numped=? WHERE numped=?"
+                );
+                updDetalle.setInt(1, nuevoId);
+                updDetalle.setInt(2, numpedLocal);
+                updDetalle.executeUpdate();
+
+                // 3️⃣ 🔥 MARCAR COMO SINCRONIZADO (CLAVE)
+                PreparedStatement updPedido = local.prepareStatement(
+                        "UPDATE Pedido SET fecreg=? WHERE numped=?"
+                );
+                updPedido.setTimestamp(1, ahora);
+                updPedido.setInt(2, numpedLocal);
+                updPedido.executeUpdate();
+
+                System.out.println("✅ Pedido sincronizado: " + numpedLocal);
             }
 
         } catch (Exception e) {
             e.printStackTrace();
-        }
-    }
-
-    private boolean enviarPedido(int numped) {
-
-        String json = "{ \"codcli\": \"C001\", \"importe\": 100 }";
-
-        return HttpUtil.post(
-                "http://34.176.161.147:5000/pedido",
-                json
-        );
-    }
-
-    private void marcarEnviado(int id) throws Exception {
-
-        try (Connection conn = DBConnection.getConnection()) {
-
-            String sql = "UPDATE Dped SET estado = 1 WHERE iddetalle = ?";
-            PreparedStatement ps = conn.prepareStatement(sql);
-
-            ps.setInt(1, id);
-            ps.executeUpdate();
-
-            System.out.println("Detalle sincronizado ID: " + id);
         }
     }
 }

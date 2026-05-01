@@ -5,18 +5,13 @@ import java.net.URL;
 
 public class MonitorService {
 
-    private static final String URL_SERVER = "http://34.176.161.147:5000/ping";
+    private final String URL_SERVER = "http://34.176.161.147:5000/ping";
 
-    public boolean verificarServidor() {
+    public boolean verificar() {
         try {
-            URL url = new URL(URL_SERVER);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-
-            conn.setRequestMethod("GET");
+            HttpURLConnection conn = (HttpURLConnection) new URL(URL_SERVER).openConnection();
             conn.setConnectTimeout(3000);
-
             return conn.getResponseCode() == 200;
-
         } catch (Exception e) {
             return false;
         }

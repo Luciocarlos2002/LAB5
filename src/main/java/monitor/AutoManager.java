@@ -1,53 +1,58 @@
 package monitor;
 
 import dao.PedidoDAO;
-import util.HttpUtil;
+import dao.DetalleDAO;
+import view.MainView;
+
+import javax.swing.JOptionPane;
 
 public class AutoManager {
 
     private MonitorService monitor = new MonitorService();
     private boolean estadoAnterior = true;
+    private boolean yaSincronizo = false;
+    private MainView view;
+
+    public AutoManager(MainView view) {
+        this.view = view;
+    }
 
     public void iniciar() {
 
         while (true) {
             try {
-                boolean estado = monitor.verificarServidor();
 
-                if (estado) {
-                    System.out.println("Servidor en línea");
-                } else {
-                    System.out.println("Primer intento fallido...");
+                // 1) Primer intento
+                boolean estado = monitor.verificar();
 
+                // 2) Retry a los 5s si falla
+                if (!estado) {
                     Thread.sleep(5000);
-
-                    boolean segundoIntento = monitor.verificarServidor();
-
-                    if (!segundoIntento) {
-                        System.out.println("Servidor CAÍDO");
-                        estado = false;
-                    } else {
-                        estado = true;
-                    }
+                    estado = monitor.verificar();
                 }
 
-                // registrar monitoreo
-                HttpUtil.post(
-                        "http://34.176.161.147:5000/monitoreo",
-                        "{ \"estadoVPS\": " + (estado ? 1 : 0) + " }"
-                );
+                // 🔥 actualizar UI
+                view.actualizarEstado(estado);
 
+                // 3) Transiciones de estado (alertas + acciones)
                 if (!estado && estadoAnterior) {
-                    System.out.println("⚠️ VPS CAÍDO -> SERVIDOR NO RESPONDE...");
+                    JOptionPane.showMessageDialog(null,
+                            "⚠️ Servidor caído (guardando en LOCAL)");
+                    yaSincronizo = false;
                 }
 
-                if (estado && !estadoAnterior) {
-                    System.out.println("✅ VPS RECUPERADO → SINCRONIZANDO...");
-                    new PedidoDAO().sincronizar();
+                if (estado && !estadoAnterior && !yaSincronizo) {
+                    JOptionPane.showMessageDialog(null,
+                            "✅ Servidor recuperado → sincronizando datos...");
+
+                    new PedidoDAO().sincronizarPedidos();
+                    new DetalleDAO().sincronizarDetalle();
+                    yaSincronizo = true;
                 }
 
                 estadoAnterior = estado;
 
+                // 4) Ciclo cada 10s
                 Thread.sleep(10000);
 
             } catch (Exception e) {
